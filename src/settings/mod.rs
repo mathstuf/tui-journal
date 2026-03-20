@@ -62,6 +62,9 @@ pub struct Settings {
     pub datum_visibility: DatumVisibility,
     /// Overwrite the path for the directory used to persist the app state.
     pub app_state_dir: Option<PathBuf>,
+    #[serde(default)]
+    /// External command used to render content preview (e.g. "bat --language=md --paging=never --color=always").
+    pub content_renderer: Option<String>,
 }
 
 impl Default for Settings {
@@ -81,6 +84,7 @@ impl Default for Settings {
             colored_tags: default_colored_tags(),
             datum_visibility: Default::default(),
             app_state_dir: Default::default(),
+            content_renderer: Default::default(),
         }
     }
 }
@@ -173,6 +177,7 @@ impl Settings {
             colored_tags: _,
             datum_visibility: _,
             app_state_dir: _,
+            content_renderer: _,
         } = self;
 
         if self.backend_type.is_none() {

@@ -7,7 +7,7 @@ use super::{ClipboardOperation, CmdResult};
 pub fn exec_back_editor_to_normal_mode(ui_components: &mut UIComponents) -> CmdResult {
     if ui_components.active_control == ControlType::EntryContentTxt {
         match ui_components.editor.get_editor_mode() {
-            EditorMode::Insert | EditorMode::Visual => {
+            EditorMode::Insert | EditorMode::Visual | EditorMode::Preview => {
                 ui_components.editor.set_editor_mode(EditorMode::Normal);
             }
             EditorMode::Normal => {
@@ -73,7 +73,52 @@ pub fn exec_toggle_editor_visual_mode(ui_components: &mut UIComponents) -> CmdRe
     match ui_components.editor.get_editor_mode() {
         EditorMode::Normal => ui_components.editor.set_editor_mode(EditorMode::Visual),
         EditorMode::Visual => ui_components.editor.set_editor_mode(EditorMode::Normal),
-        EditorMode::Insert => return Ok(HandleInputReturnType::NotFound),
+        EditorMode::Insert | EditorMode::Preview => return Ok(HandleInputReturnType::NotFound),
+    }
+
+    Ok(HandleInputReturnType::Handled)
+}
+
+pub async fn exec_toggle_editor_preview_mode<D: DataProvider>(
+    ui_components: &mut UIComponents<'_>,
+    app: &App<D>,
+) -> CmdResult {
+    debug_assert!(ui_components.active_control == ControlType::EntryContentTxt);
+
+    match ui_components.editor.get_editor_mode() {
+        EditorMode::Normal => {
+            let content_renderer = match &app.settings.content_renderer {
+                Some(cmd) if !cmd.is_empty() => cmd.clone(),
+                _ => {
+                    ui_components.show_err_msg(
+                        "No content_renderer configured in settings.\n\rSet content_renderer in config.toml (e.g. content_renderer = \"bat --language=md --paging=never --color=always\")".into(),
+                    );
+                    return Ok(HandleInputReturnType::Handled);
+                }
+            };
+
+            let content = ui_components.editor.get_content();
+
+            match crate::app::content_renderer::render_content(&content, &content_renderer).await {
+                Ok(text) => {
+                    ui_components.editor.set_preview_content(text);
+                    ui_components
+                        .editor
+                        .set_editor_mode(EditorMode::Preview);
+                }
+                Err(err) => {
+                    ui_components.show_err_msg(format!(
+                        "Content renderer failed:\n\r{err}"
+                    ));
+                }
+            }
+        }
+        EditorMode::Preview => {
+            ui_components.editor.set_editor_mode(EditorMode::Normal);
+        }
+        EditorMode::Insert | EditorMode::Visual => {
+            return Ok(HandleInputReturnType::NotFound);
+        }
     }
 
     Ok(HandleInputReturnType::Handled)

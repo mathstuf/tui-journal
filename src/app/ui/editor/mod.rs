@@ -2,27 +2,29 @@ use anyhow::{anyhow, bail};
 use arboard::Clipboard;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use ratatui::{
-    Frame,
     layout::Rect,
     prelude::Margin,
     style::{Color, Style},
     symbols,
-    widgets::{Block, Borders, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    text::Text,
+    widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
+    Frame,
 };
 
-use crate::app::{App, keymap::Input, runner::HandleInputReturnType};
+use crate::app::{keymap::Input, runner::HandleInputReturnType, App};
 
 use backend::DataProvider;
 use tui_textarea::{CursorMove, Scrolling, TextArea};
 
-use super::Styles;
 use super::commands::ClipboardOperation;
+use super::Styles;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorMode {
     Normal,
     Insert,
     Visual,
+    Preview,
 }
 
 pub struct Editor<'a> {
@@ -31,6 +33,14 @@ pub struct Editor<'a> {
     is_active: bool,
     is_dirty: bool,
     has_unsaved: bool,
+    /// Rendered preview content (ANSI → ratatui Text)
+    preview_text: Option<Text<'a>>,
+    /// Current vertical scroll offset in preview mode
+    preview_scroll: u16,
+    /// Total number of lines in the rendered preview content
+    preview_content_height: u16,
+    /// Height of the preview area (for page scrolling)
+    preview_area_height: u16,
 }
 
 impl From<&Input> for KeyEvent {
@@ -54,6 +64,10 @@ impl<'a> Editor<'a> {
             is_active: false,
             is_dirty: false,
             has_unsaved: false,
+            preview_text: None,
+            preview_scroll: 0,
+            preview_content_height: 0,
+            preview_area_height: 0,
         }
     }
 
@@ -68,8 +82,16 @@ impl<'a> Editor<'a> {
     }
 
     #[inline]
+    pub fn is_preview_mode(&self) -> bool {
+        self.mode == EditorMode::Preview
+    }
+
+    #[inline]
     pub fn is_prioritized(&self) -> bool {
-        matches!(self.mode, EditorMode::Insert | EditorMode::Visual)
+        matches!(
+            self.mode,
+            EditorMode::Insert | EditorMode::Visual | EditorMode::Preview
+        )
     }
 
     pub fn set_current_entry<D: DataProvider>(&mut self, entry_id: Option<u32>, app: &App<D>) {
@@ -99,6 +121,47 @@ impl<'a> Editor<'a> {
         input: &Input,
         app: &App<D>,
     ) -> anyhow::Result<HandleInputReturnType> {
+        // Preview mode: only scroll keys, Esc returns to Normal, all others are no-ops
+        if self.is_preview_mode() {
+            let has_ctrl = input.modifiers.contains(KeyModifiers::CONTROL);
+            match (input.key_code, has_ctrl) {
+                (KeyCode::Char('j'), false) | (KeyCode::Down, false) => {
+                    self.scroll_preview(1);
+                }
+                (KeyCode::Char('k'), false) | (KeyCode::Up, false) => {
+                    self.scroll_preview(-1);
+                }
+                (KeyCode::Char('d'), true) => {
+                    let half = (self.preview_area_height / 2).max(1) as i32;
+                    self.scroll_preview(half);
+                }
+                (KeyCode::Char('u'), true) => {
+                    let half = (self.preview_area_height / 2).max(1) as i32;
+                    self.scroll_preview(-half);
+                }
+                (KeyCode::Char('f'), true) | (KeyCode::PageDown, _) => {
+                    let page = self.preview_area_height.max(1) as i32;
+                    self.scroll_preview(page);
+                }
+                (KeyCode::Char('b'), true) | (KeyCode::PageUp, _) => {
+                    let page = self.preview_area_height.max(1) as i32;
+                    self.scroll_preview(-page);
+                }
+                (KeyCode::Char('g'), false) => {
+                    self.preview_scroll = 0;
+                }
+                (KeyCode::Char('G'), false) => {
+                    self.preview_scroll = self
+                        .preview_content_height
+                        .saturating_sub(self.preview_area_height);
+                }
+                // Esc is handled by editor_keymaps (BackEditorNormalMode) before we get here,
+                // so any other key is just a no-op in preview mode
+                _ => {}
+            }
+            return Ok(HandleInputReturnType::Handled);
+        }
+
         if self.is_insert_mode() {
             // We must handle clipboard operation separately if sync with system clipboard is
             // activated
@@ -321,6 +384,9 @@ impl<'a> Editor<'a> {
             (EditorMode::Visual, EditorMode::Normal | EditorMode::Insert) => {
                 self.text_area.cancel_selection();
             }
+            (EditorMode::Preview, EditorMode::Normal) => {
+                self.clear_preview();
+            }
             _ => {}
         }
 
@@ -334,6 +400,7 @@ impl<'a> Editor<'a> {
                 EditorMode::Normal => " - NORMAL",
                 EditorMode::Insert => " - EDIT",
                 EditorMode::Visual => " - Visual",
+                EditorMode::Preview => " - PREVIEW",
             };
             title.push_str(mode_caption);
         }
@@ -346,9 +413,55 @@ impl<'a> Editor<'a> {
         let text_block_style = match (self.mode, self.is_active) {
             (EditorMode::Insert, _) => estyles.block_insert,
             (EditorMode::Visual, _) => estyles.block_visual,
+            (EditorMode::Preview, _) => estyles.block_preview,
             (EditorMode::Normal, true) => estyles.block_normal_active,
             (EditorMode::Normal, false) => estyles.block_normal_inactive,
         };
+
+        // Preview mode: render Paragraph with pre-rendered ANSI content instead of TextArea
+        if self.mode == EditorMode::Preview {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .style(text_block_style)
+                .title(title);
+
+            let inner_area = block.inner(area);
+            self.preview_area_height = inner_area.height;
+
+            let preview_content = self
+                .preview_text
+                .clone()
+                .unwrap_or_else(|| Text::raw("No preview content"));
+
+            let paragraph = Paragraph::new(preview_content)
+                .block(block)
+                .wrap(Wrap { trim: false })
+                .scroll((self.preview_scroll, 0));
+
+            frame.render_widget(paragraph, area);
+
+            // Render vertical scrollbar for preview
+            if self.preview_content_height > self.preview_area_height {
+                let mut state = ScrollbarState::default()
+                    .content_length(self.preview_content_height as usize)
+                    .position(self.preview_scroll as usize);
+
+                let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(Some("▲"))
+                    .end_symbol(Some("▼"))
+                    .track_symbol(Some(symbols::line::VERTICAL))
+                    .thumb_symbol(symbols::block::FULL);
+
+                let scroll_area = area.inner(Margin {
+                    horizontal: 0,
+                    vertical: 1,
+                });
+
+                frame.render_stateful_widget(scrollbar, scroll_area, &mut state);
+            }
+
+            return;
+        }
 
         self.text_area.set_block(
             Block::default()
@@ -362,6 +475,8 @@ impl<'a> Editor<'a> {
                 EditorMode::Normal => estyles.cursor_normal,
                 EditorMode::Insert => estyles.cursor_insert,
                 EditorMode::Visual => estyles.cursor_visual,
+                // Preview is handled above and returns early
+                EditorMode::Preview => unreachable!(),
             };
             Style::from(s)
         } else {
@@ -524,6 +639,30 @@ impl<'a> Editor<'a> {
         }
 
         Ok(HandleInputReturnType::Handled)
+    }
+
+    /// Sets the rendered preview content and resets scroll position.
+    pub fn set_preview_content(&mut self, text: Text<'a>) {
+        self.preview_content_height = text.lines.len() as u16;
+        self.preview_text = Some(text);
+        self.preview_scroll = 0;
+    }
+
+    /// Clears preview state (text, scroll, heights).
+    pub fn clear_preview(&mut self) {
+        self.preview_text = None;
+        self.preview_scroll = 0;
+        self.preview_content_height = 0;
+        self.preview_area_height = 0;
+    }
+
+    /// Scrolls preview by the given delta (positive = down, negative = up).
+    fn scroll_preview(&mut self, delta: i32) {
+        let max_scroll = self
+            .preview_content_height
+            .saturating_sub(self.preview_area_height);
+        let new_scroll = (self.preview_scroll as i32).saturating_add(delta);
+        self.preview_scroll = (new_scroll.max(0) as u16).min(max_scroll);
     }
 }
 

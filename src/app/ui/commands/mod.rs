@@ -67,6 +67,7 @@ pub enum UICommand {
     PageDownEntries,
     Undo,
     Redo,
+    ToggleEditorPreviewMode,
 }
 
 #[derive(Debug, Clone)]
@@ -221,6 +222,10 @@ impl UICommand {
             ),
             UICommand::Undo => CommandInfo::new("Undo", "Undo the latest change on journals"),
             UICommand::Redo => CommandInfo::new("Redo", "Redo the latest change on journals"),
+            UICommand::ToggleEditorPreviewMode => CommandInfo::new(
+                "Toggle Editor Preview Mode",
+                "Toggle content preview using an external renderer when editor is in focus",
+            ),
         }
     }
 
@@ -280,6 +285,9 @@ impl UICommand {
             }
             UICommand::Undo => exec_undo(ui_components, app).await,
             UICommand::Redo => exec_redo(ui_components, app).await,
+            UICommand::ToggleEditorPreviewMode => {
+                exec_toggle_editor_preview_mode(ui_components, app).await
+            }
         }
     }
 
@@ -389,6 +397,7 @@ impl UICommand {
             }
             UICommand::Undo => continue_undo(ui_components, app, msg_box_result).await,
             UICommand::Redo => continue_redo(ui_components, app, msg_box_result).await,
+            UICommand::ToggleEditorPreviewMode => not_implemented(),
         }
     }
 }
