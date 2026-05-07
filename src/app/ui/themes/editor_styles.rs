@@ -9,6 +9,8 @@ pub struct EditorStyles {
     pub block_insert: Style,
     #[serde(default = "block_visual")]
     pub block_visual: Style,
+    #[serde(default = "block_preview")]
+    pub block_preview: Style,
     #[serde(default = "block_normal_active")]
     pub block_normal_active: Style,
     #[serde(default = "block_normal_inactive")]
@@ -28,6 +30,7 @@ impl Default for EditorStyles {
         Self {
             block_insert: block_insert(),
             block_visual: block_visual(),
+            block_preview: block_preview(),
             block_normal_active: block_normal_active(),
             block_normal_inactive: block_normal_inactive(),
             cursor_normal: cursor_normal(),
@@ -51,6 +54,15 @@ fn block_insert() -> Style {
 fn block_visual() -> Style {
     Style {
         fg: Some(VISUAL_MODE_COLOR),
+        modifiers: Modifier::BOLD,
+        ..Default::default()
+    }
+}
+
+#[inline]
+fn block_preview() -> Style {
+    Style {
+        fg: Some(PREVIEW_MODE_COLOR),
         modifiers: Modifier::BOLD,
         ..Default::default()
     }

@@ -289,6 +289,10 @@ pub(crate) fn get_editor_mode_keymaps() -> Vec<Keymap> {
             Input::new(KeyCode::Char('p'), KeyModifiers::CONTROL),
             UICommand::PasteOsClipboard,
         ),
+        Keymap::new(
+            Input::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
+            UICommand::ToggleEditorPreviewMode,
+        ),
     ]
 }
 

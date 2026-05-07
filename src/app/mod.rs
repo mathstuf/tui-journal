@@ -18,6 +18,7 @@ use std::{
 };
 
 mod colored_tags;
+pub mod content_renderer;
 mod external_editor;
 mod filter;
 mod history;

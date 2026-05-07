@@ -22,6 +22,7 @@ const ACTIVE_CONTROL_COLOR: Color = Color::Reset;
 const INACTIVE_CONTROL_COLOR: Color = Color::Rgb(170, 170, 200);
 const EDITOR_MODE_COLOR: Color = Color::LightGreen;
 const VISUAL_MODE_COLOR: Color = Color::Blue;
+const PREVIEW_MODE_COLOR: Color = Color::Cyan;
 const SELECTED_FOREGROUND_COLOR: Color = Color::Yellow;
 const INVALID_CONTROL_COLOR: Color = Color::LightRed;
 const ACTIVE_INPUT_BORDER_COLOR: Color = Color::LightYellow;
